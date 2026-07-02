@@ -866,10 +866,15 @@
           <button type="button" class="btn btn-secondary btn-sm" onclick="addSection6Anticipated()" style="margin-top:10px;">+ Add Item</button>
         </div>
 
-        <!-- 6.4 Status of Cash Allowances (round 14: auto-balance + TOTAL row) -->
+        <!-- 6.4 Status of Cash Allowances (round 14: auto-balance + TOTAL row; round 43: optional Notes column) -->
         <div class="card">
           <div class="card-title"><span class="dot"></span>6.4 STATUS OF CASH ALLOWANCES</div>
           <p style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">4-column table. <strong>Description</strong> and <strong>Contract Amount</strong> carry forward month over month. <strong>Consumed To Date</strong> (highlighted in yellow) updates monthly. <strong>Balance Remaining</strong> auto-calculates as Contract − Consumed. A bold <strong>TOTAL</strong> row at the bottom sums each numeric column.</p>
+          <label style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--surface2); border:1px solid var(--border); border-radius:5px; cursor:pointer; font-size:13px; color:var(--text); margin-bottom:14px;">
+            <input type="checkbox" id="s6_4-has-notes" style="width:18px; height:18px; cursor:pointer;"
+              onchange="__ensureSection6State(); state.section6.s6_4_hasNotes = this.checked; saveState(); renderSection6Allowances();">
+            Does this project need a Notes column (for owner comments) on this table?
+          </label>
           <table style="width:100%; border-collapse:collapse; font-size:12px;">
             <thead>
               <tr style="background:var(--surface2);">
@@ -877,6 +882,7 @@
                 <th style="padding:6px 8px; text-align:right; color:var(--text-dim); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border);">Contract Amount</th>
                 <th style="padding:6px 8px; text-align:right; color:var(--yellow); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border);">Consumed To Date</th>
                 <th style="padding:6px 8px; text-align:right; color:var(--text-dim); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border);">Balance (auto)</th>
+                <th id="s6_4-notes-th" style="display:none; padding:6px 8px; text-align:left; color:var(--text-dim); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.6px; border-bottom:1px solid var(--border);">Notes</th>
                 <th style="padding:6px 8px; width:36px; border-bottom:1px solid var(--border);"></th>
               </tr>
             </thead>
@@ -2160,7 +2166,8 @@ async function generateReportDocx(data) {
       // Round 12: '5.2' RFI list no longer a table — rendered as inline-priority paragraphs
       '5.3':   [6360, 3000],                            // Submittal Status / Count (2 cols)
       '6.1':   [4500, 1200, 1860, 1800],                // Change Order Log under 6.1 (4 cols: Status / Total / Value / Add'l Days)
-      '6.4':   [3000, 1860, 1900, 2600],                // Cash Allowances under 6.4 (4 cols: Description / Contract Amount / Consumed / Balance) — round 13
+      // Round 43: 5-wide when the project has opted into the optional Notes column.
+      '6.4':   (data.section6_s6_4_hasNotes ? [2400, 1860, 1900, 2000, 1200] : [3000, 1860, 1900, 2600]), // Cash Allowances under 6.4 (Description / Contract Amount / Consumed / Balance [/ Notes]) — round 13/43
       '6.5':   [3000, 1860, 1900, 2600],                // Status of Contingency under 6.5 — round 14
       '6.2':   [1500, 5360, 2500],                      // Open RFC log under 6.2 (3 cols: No / Description / Value)
       '6.3':   [1100, 1600, 3060, 1700, 1900],          // Change Orders under 6.3 (5 cols: CO # / Date / Title / RFC-CCN / Value)
@@ -3245,6 +3252,10 @@ function __ensureSection4State() {
   if (typeof state.section4.s4_2_overview !== 'string') state.section4.s4_2_overview = '';
   if (typeof state.section4.s4_2_heatMapImage !== 'string') state.section4.s4_2_heatMapImage = '';
   if (!Array.isArray(state.section4.s4_2_1_redRisks)) state.section4.s4_2_1_redRisks = [];
+  // Round 43: normalize legacy risk rows (created before the Closed workflow existed)
+  for (const r of state.section4.s4_2_1_redRisks) {
+    if (r && typeof r.closed !== 'boolean') r.closed = false;
+  }
 }
 
 function __buildSection4TSV(s4, settings) {
@@ -3285,7 +3296,9 @@ function __buildSection4TSV(s4, settings) {
   }
   // Round 41: each red risk = BOLD title + normal description (no bullets)
   const redRisks = Array.isArray(s4.s4_2_1_redRisks) ? s4.s4_2_1_redRisks : [];
-  const nonEmptyRisks = redRisks.filter(r => r && (
+  // Round 43: closed risks stay in state (until the PM deletes them) but drop out
+  // of the export \u2014 they're no longer "currently red".
+  const nonEmptyRisks = redRisks.filter(r => r && !r.closed && (
     (r.title && r.title.trim()) || (r.description && r.description.trim())
   ));
   if (nonEmptyRisks.length > 0) {
@@ -3399,39 +3412,65 @@ function renderSection4RedRisks() {
   }
   risks.forEach((r, idx) => {
     // Round 41: bold title input + description textarea (card layout)
+    // Round 43: risks persist until explicitly marked "Closed" — delete is locked until then.
+    const isClosed = !!r.closed;
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:5px; margin-bottom:10px;';
+    wrap.style.cssText = 'padding:10px; background:var(--surface2); border:1px solid var(--border); border-radius:5px; margin-bottom:10px;' + (isClosed ? ' opacity:0.55;' : '');
     const titleId = 's4_2_1-redrisk-title-' + idx;
     const descId  = 's4_2_1-redrisk-desc-' + idx;
+    const closedId = 's4_2_1-redrisk-closed-' + idx;
     const titleVal = (r.title || '').replace(/"/g, '&quot;');
     const descVal  = (r.description || '').replace(/</g, '&lt;');
+    const deleteBtnHtml = isClosed
+      ? '<button type="button" onclick="deleteSection4RedRisk(' + idx + ')" ' +
+          'style="padding:4px 8px; border:1px solid #c33; background:transparent; color:#ff6b6b; border-radius:3px; cursor:pointer; font-size:13px; font-weight:700;" ' +
+          'title="Delete this closed risk">\u00d7</button>'
+      : '<button type="button" disabled ' +
+          'style="padding:4px 8px; border:1px solid var(--border); background:transparent; color:var(--text-muted); border-radius:3px; cursor:not-allowed; font-size:13px; font-weight:700; opacity:0.4;" ' +
+          'title="Check \'Closed\' below before deleting \u2014 the risk stays visible until then">\u00d7</button>';
     wrap.innerHTML =
       '<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">' +
         '<div style="flex:0 0 60px; font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.6px; font-weight:700;">Risk #' + (idx + 1) + '</div>' +
-        '<input type="text" id="' + titleId + '" value="' + titleVal + '" placeholder="Risk title (e.g. Supply chain — imported steel)" ' +
-          'style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:12px; font-weight:700; box-sizing:border-box;" ' +
+        '<input type="text" id="' + titleId + '" value="' + titleVal + '" placeholder="Risk title (e.g. Supply chain \u2014 imported steel)" ' +
+          'style="flex:1; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:12px; font-weight:700; box-sizing:border-box;' + (isClosed ? ' text-decoration:line-through;' : '') + '" ' +
           'oninput="state.section4.s4_2_1_redRisks[' + idx + '].title = this.value; saveState();">' +
         '<button type="button" class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:11px;" ' +
           'onclick="openCopilotHelp(\'' + descId + '\', \'4.2.1 Red Risk description\', \'Describe this red risk in 1-2 sentences. State what the risk is, why it is currently red, and what mitigation is underway. Third-person, Bockstael voice.\')">' +
-          '🤖' +
+          '\ud83e\udd16' +
         '</button>' +
-        '<button type="button" onclick="deleteSection4RedRisk(' + idx + ')" ' +
-          'style="padding:4px 8px; border:1px solid #c33; background:transparent; color:#ff6b6b; border-radius:3px; cursor:pointer; font-size:13px; font-weight:700;">×</button>' +
+        deleteBtnHtml +
       '</div>' +
       '<textarea id="' + descId + '" rows="3" placeholder="Risk description (1-2 sentences: what the risk is, why it is currently red, mitigation in progress)..." ' +
-        'oninput="state.section4.s4_2_1_redRisks[' + idx + '].description = this.value; saveState();">' + descVal + '</textarea>';
+        'oninput="state.section4.s4_2_1_redRisks[' + idx + '].description = this.value; saveState();">' + descVal + '</textarea>' +
+      '<label style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12px; color:' + (isClosed ? 'var(--text)' : 'var(--text-dim)') + '; cursor:pointer;">' +
+        '<input type="checkbox" id="' + closedId + '"' + (isClosed ? ' checked' : '') + ' style="width:16px; height:16px; cursor:pointer;" ' +
+          'onchange="toggleSection4RedRiskClosed(' + idx + ', this.checked);">' +
+        (isClosed
+          ? 'Closed \u2014 no longer red, excluded from export. Safe to delete.'
+          : 'Mark Closed (stays here until checked; once closed it drops from the export and can be deleted)') +
+      '</label>';
     c.appendChild(wrap);
   });
 }
 function addSection4RedRisk() {
   __ensureSection4State();
-  state.section4.s4_2_1_redRisks.push({ title: '', description: '' });
+  state.section4.s4_2_1_redRisks.push({ title: '', description: '', closed: false });
   if (typeof saveState === 'function') saveState();
   renderSection4RedRisks();
 }
 function deleteSection4RedRisk(idx) {
   __ensureSection4State();
+  const r = state.section4.s4_2_1_redRisks[idx];
+  if (!r || !r.closed) return; // guardrail: must be marked Closed first
   state.section4.s4_2_1_redRisks.splice(idx, 1);
+  if (typeof saveState === 'function') saveState();
+  renderSection4RedRisks();
+}
+function toggleSection4RedRiskClosed(idx, checked) {
+  __ensureSection4State();
+  const r = state.section4.s4_2_1_redRisks[idx];
+  if (!r) return;
+  r.closed = !!checked;
   if (typeof saveState === 'function') saveState();
   renderSection4RedRisks();
 }
@@ -3836,17 +3875,45 @@ function renderSection5Counts() {
   // Round 11: bold Total + Average rows in UI to mirror export styling
   const boldRows = new Set(['TOTAL', 'AVG_CONSULTANT_TURNAROUND']);
   const inputStyle = 'width:100%; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:12px; box-sizing:border-box; text-align:right;';
+  // Round 43: rows that feed the auto-summed "Total Shop Drawing Count" row below.
+  // TOTAL itself and the Average Turnaround stat are excluded from the sum.
+  const summableKeys = new Set(['REVIEWED', 'WAITING_ON_TRADE_ON_TIME', 'WAITING_ON_TRADE_OVERDUE',
+                                 'WAITING_ON_CONSULTANT_ON_TIME', 'WAITING_ON_CONSULTANT_OVERDUE', 'REVISE_AND_RESUBMIT']);
   __SECTION5_STATUS_ROWS.forEach((row) => {
     const tr = document.createElement('tr');
     const val = state.section5.s5_3_counts[row.key] || '0';
     const sw = swatch[row.key];
     const labelStyle = 'padding:6px 10px; border:1px solid var(--border); color:' + (sw === 'transparent' ? 'var(--text)' : '#1a1d27') + '; background:' + (sw === 'transparent' ? 'var(--surface2)' : sw) + '; font-weight:' + (boldRows.has(row.key) ? '700' : '500') + ';';
+    // Round 43: TOTAL row gets an id so the auto-sum can write into it directly.
+    // It stays a normal editable input — the PM can still type over the auto-filled value.
+    const inputId = 's5_3-count-' + row.key;
+    const oninput = row.key === 'TOTAL'
+      ? 'state.section5.s5_3_counts[\'TOTAL\'] = this.value; saveState();'
+      : 'state.section5.s5_3_counts[\'' + row.key + '\'] = this.value; saveState(); __updateSection53Total();';
     tr.innerHTML =
       '<td style="' + labelStyle + '">' + row.label + '</td>' +
-      '<td style="padding:6px; border:1px solid var(--border);"><input type="text" value="' + val + '" style="' + inputStyle + '" ' +
-        'oninput="state.section5.s5_3_counts[\'' + row.key + '\'] = this.value; saveState();"></td>';
+      '<td style="padding:6px; border:1px solid var(--border);"><input type="text" id="' + inputId + '" value="' + val + '" style="' + inputStyle + '" ' +
+        'oninput="' + oninput + '"></td>';
     tb.appendChild(tr);
   });
+}
+
+// Round 43: auto-fill "Total Shop Drawing Count" from the 6 status rows above it.
+// Stays editable — this only pre-fills/refreshes the value when a status count changes;
+// the PM can still type directly into the TOTAL field to override it afterward.
+function __updateSection53Total() {
+  __ensureSection5State();
+  const summableKeys = ['REVIEWED', 'WAITING_ON_TRADE_ON_TIME', 'WAITING_ON_TRADE_OVERDUE',
+                         'WAITING_ON_CONSULTANT_ON_TIME', 'WAITING_ON_CONSULTANT_OVERDUE', 'REVISE_AND_RESUBMIT'];
+  let sum = 0;
+  for (const k of summableKeys) {
+    const n = parseInt((state.section5.s5_3_counts[k] || '0').toString().replace(/[,\s]/g, ''), 10);
+    if (!isNaN(n)) sum += n;
+  }
+  state.section5.s5_3_counts['TOTAL'] = String(sum);
+  const totalInput = document.getElementById('s5_3-count-TOTAL');
+  if (totalInput) totalInput.value = String(sum);
+  if (typeof saveState === 'function') saveState();
 }
 
 function populateSection5UI() {
@@ -3904,7 +3971,7 @@ function __sec6ParseInt(s) {
 const __SECTION6_CO_ROWS = [
   { key: 'waitingOnTrades', label: 'Waiting on Trades Pricing',           shade: 'FABEBF' },
   { key: 'quoteSubmitted',  label: 'Quote Submitted (Pending Approval)',  shade: 'FFFF99' },
-  { key: 'approvedRfcs',    label: 'Approved RFCs',                       shade: '92D050' }
+  { key: 'approvedRfcs',    label: 'Approved Changes',                    shade: '92D050' }
 ];
 
 function __defaultSection6State() {
@@ -3914,6 +3981,7 @@ function __defaultSection6State() {
     s6_1_changeOrderLog: co,
     s6_3_anticipated: [],
     s6_4_allowances: [],
+    s6_4_hasNotes: false,
     s6_5_hasContingency: false
   };
 }
@@ -3930,6 +3998,7 @@ function __ensureSection6State() {
   }
   if (!Array.isArray(state.section6.s6_3_anticipated)) state.section6.s6_3_anticipated = [];
   if (!Array.isArray(state.section6.s6_4_allowances)) state.section6.s6_4_allowances = [];
+  if (typeof state.section6.s6_4_hasNotes !== 'boolean') state.section6.s6_4_hasNotes = false;
   if (typeof state.section6.s6_5_hasContingency !== 'boolean') state.section6.s6_5_hasContingency = false;
 }
 
@@ -3972,14 +4041,17 @@ function __buildSection6TSV(s6) {
   // ===== 6.4 Status of Cash Allowances =====
   parts.push('6.4\tStatus of Cash Allowances');
   const allow = Array.isArray(s6.s6_4_allowances) ? s6.s6_4_allowances : [];
+  // Round 43: optional Notes column, toggled per-project via s6_4_hasNotes.
+  const hasNotes64 = s6.s6_4_hasNotes === true;
   const nonEmptyAllow = allow.filter(a => a && (
     (a.description || '').trim() ||
     (a.contractAmount || '').trim() ||
-    (a.consumed || '').trim()
+    (a.consumed || '').trim() ||
+    (a.notes || '').trim()
   ));
-  parts.push('Description\tContract Amount\tConsumed To Date\tBalance Remaining');
+  parts.push('Description\tContract Amount\tConsumed To Date\tBalance Remaining' + (hasNotes64 ? '\tNotes' : ''));
   if (nonEmptyAllow.length === 0) {
-    parts.push('[PM: Add cash allowance rows]\t \t \t ');
+    parts.push('[PM: Add cash allowance rows]\t \t \t ' + (hasNotes64 ? '\t ' : ''));
   } else {
     let ctrSum = 0, conSum = 0, balSum = 0;
     for (const a of nonEmptyAllow) {
@@ -3991,10 +4063,11 @@ function __buildSection6TSV(s6) {
         ((a.description || '').trim() || ' ') + '\t' +
         ((a.contractAmount || '').trim() || '\$0.00') + '\t' +
         ((a.consumed || '').trim() || '\$0.00') + '\t' +
-        __sec6FormatCurrency(balN)
+        __sec6FormatCurrency(balN) +
+        (hasNotes64 ? '\t' + ((a.notes || '').trim() || ' ') : '')
       );
     }
-    parts.push('TOTAL\t' + __sec6FormatCurrency(ctrSum) + '\t' + __sec6FormatCurrency(conSum) + '\t' + __sec6FormatCurrency(balSum));
+    parts.push('TOTAL\t' + __sec6FormatCurrency(ctrSum) + '\t' + __sec6FormatCurrency(conSum) + '\t' + __sec6FormatCurrency(balSum) + (hasNotes64 ? '\t ' : ''));
   }
 
   // ===== 6.5 Status of Contingency (checkbox-controlled placeholder) =====
@@ -4110,10 +4183,16 @@ function renderSection6Allowances() {
   if (!tb || !tf) return;
   tb.innerHTML = '';
   tf.innerHTML = '';
+  // Round 43: optional Notes column, toggled per-project via s6_4_hasNotes.
+  const hasNotes = !!state.section6.s6_4_hasNotes;
+  const notesTh = document.getElementById('s6_4-notes-th');
+  if (notesTh) notesTh.style.display = hasNotes ? '' : 'none';
+  const notesCb = document.getElementById('s6_4-has-notes');
+  if (notesCb) notesCb.checked = hasNotes;
   const arr = state.section6.s6_4_allowances;
   if (arr.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="5" style="padding:10px; text-align:center; font-size:12px; color:var(--text-muted); font-style:italic; border:1px dashed var(--border);">No cash allowance rows yet. Click "+ Add Cash Allowance Row" to start.</td>';
+    tr.innerHTML = '<td colspan="' + (hasNotes ? 6 : 5) + '" style="padding:10px; text-align:center; font-size:12px; color:var(--text-muted); font-style:italic; border:1px dashed var(--border);">No cash allowance rows yet. Click "+ Add Cash Allowance Row" to start.</td>';
     tb.appendChild(tr);
     return;
   }
@@ -4128,8 +4207,13 @@ function renderSection6Allowances() {
     const dVal = (a.description || '').replace(/"/g, '&quot;');
     const aVal = (a.contractAmount || '').replace(/"/g, '&quot;');
     const cVal = (a.consumed || '').replace(/"/g, '&quot;');
+    const nVal = (a.notes || '').replace(/"/g, '&quot;');
     // CRITICAL: oninput only updates state + calls surgical __updateSection64Totals
     // (no re-render of tbody → input focus preserved)
+    const notesTd = hasNotes
+      ? '<td style="' + cellStyle + '"><input type="text" placeholder="Note for owner" value="' + nVal + '" style="' + inputStyle + '" ' +
+          'oninput="state.section6.s6_4_allowances[' + idx + '].notes = this.value; saveState();"></td>'
+      : '';
     tr.innerHTML =
       '<td style="' + cellStyle + '"><input type="text" placeholder="CA #N - Description" value="' + dVal + '" style="' + inputStyle + '" ' +
         'oninput="state.section6.s6_4_allowances[' + idx + '].description = this.value; saveState();"></td>' +
@@ -4138,6 +4222,7 @@ function renderSection6Allowances() {
       '<td style="' + cellStyle + '"><input type="text" placeholder="$0.00" value="' + cVal + '" style="' + yellowAmountStyle + '" ' +
         'oninput="state.section6.s6_4_allowances[' + idx + '].consumed = this.value; saveState(); __updateSection64Totals();"></td>' +
       '<td id="s6_4-balance-' + idx + '" style="' + balanceStyle + '">$0.00</td>' +
+      notesTd +
       '<td style="' + cellStyle + '; text-align:center;"><button type="button" onclick="deleteSection6Allowance(' + idx + ')" ' +
         'style="padding:4px 8px; border:1px solid #c33; background:transparent; color:#ff6b6b; border-radius:3px; cursor:pointer; font-size:13px; font-weight:700;">\u00d7</button></td>';
     tb.appendChild(tr);
@@ -4146,11 +4231,13 @@ function renderSection6Allowances() {
   const totalTr = document.createElement('tr');
   const totalCellLabel = 'padding:8px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-weight:700; font-size:12px;';
   const totalCellVal   = 'padding:8px 10px; border:1px solid var(--border); background:var(--surface2); color:var(--yellow); font-weight:700; text-align:right; font-size:12px;';
+  const notesFooterTd = hasNotes ? '<td style="' + totalCellLabel + '"></td>' : '';
   totalTr.innerHTML =
     '<td style="' + totalCellLabel + '">TOTAL</td>' +
     '<td id="s6_4-total-ctr" style="' + totalCellVal + '">$0.00</td>' +
     '<td id="s6_4-total-con" style="' + totalCellVal + '">$0.00</td>' +
     '<td id="s6_4-total-bal" style="' + totalCellVal + '">$0.00</td>' +
+    notesFooterTd +
     '<td style="padding:8px 10px; border:1px solid var(--border); background:var(--surface2);"></td>';
   tf.appendChild(totalTr);
   __updateSection64Totals();
@@ -4179,7 +4266,7 @@ function __updateSection64Totals() {
 
 function addSection6Allowance() {
   __ensureSection6State();
-  state.section6.s6_4_allowances.push({ description: '', contractAmount: '', consumed: '' });
+  state.section6.s6_4_allowances.push({ description: '', contractAmount: '', consumed: '', notes: '' });
   if (typeof saveState === 'function') saveState();
   renderSection6Allowances();
 }
@@ -4194,6 +4281,9 @@ function populateSection6UI() {
   __ensureSection6State();
   renderSection61ChangeOrder();
   renderSection6Anticipated();
+  // Hydrate 6.4 Notes toggle before render so the thead reflects saved state on load
+  const notesCb = document.getElementById('s6_4-has-notes');
+  if (notesCb) notesCb.checked = !!state.section6.s6_4_hasNotes;
   renderSection6Allowances();
   // Hydrate 6.5 checkbox
   const cb = document.getElementById('s6_5-has-contingency');
@@ -4416,6 +4506,10 @@ function __updateSection8Previews() {
   }
 }
 
+function populateSection8UI() {
+  __ensureSection8State();
+  __updateSection8Previews();
+}
 
 // ============================================================
 // Shaftesbury v1.0.0 round 32: Section 9.0 Photographs
@@ -4658,6 +4752,8 @@ function buildReportData(state) {
     section6Override: __buildSection6TSV(state.section6 || {}),
     section6OverrideRaw: state.section6Override,
     section6CopilotParagraphs,
+    // Round 43: lets the docx export pick the right 6.4 column-width preset.
+    section6_s6_4_hasNotes: !!(state.section6 && state.section6.s6_4_hasNotes),
     // Round 27: 7.0 auto-generated from settings + optional PM additional commentary from state.section7
     section7Override: __buildSection7TSV(state.settings, state.section7),
     section7OverrideRaw: state.section7Override,
@@ -5248,7 +5344,8 @@ function __doResetForNewMonth() {
     state.section4.s4_2_greenRisks = '';
     state.section4.s4_2_overview = '';
     state.section4.s4_2_heatMapImage = '';
-    state.section4.s4_2_1_redRisks = [];
+    // Round 43: s4_2_1_redRisks intentionally left untouched at month rollover \u2014
+    // red risks persist until the PM checks \"Closed\" and deletes them manually.
   }
   // --- 5.0 ---
   if (typeof __ensureSection5State === 'function') __ensureSection5State();
@@ -6365,7 +6462,8 @@ function saveToNextMonth() {
     state.section4.s4_2_greenRisks = '';
     state.section4.s4_2_overview = '';
     state.section4.s4_2_heatMapImage = '';
-    state.section4.s4_2_1_redRisks = [];
+    // Round 43: s4_2_1_redRisks intentionally left untouched at month rollover \u2014
+    // red risks persist until the PM checks \"Closed\" and deletes them manually.
   }
   if (state.section5) {
     state.section5.s5_2_submitted = '';
@@ -6972,7 +7070,7 @@ ${(state.section5 && Array.isArray(state.section5.s5_2_rfis) ? state.section5.s5
 5.3 Submittal outstanding desc (PM-entered): ${(state.section5 && state.section5.s5_3_outstandingDesc) || '(none)'}
 
 6.1 Change Order Log totals (PM-entered):
-${(function(){ const co=(state.section6&&state.section6.s6_1_changeOrderLog)||{}; return ['  Waiting on Trades Pricing: Total='+((co.waitingOnTrades&&co.waitingOnTrades.total)||'0')+' Value='+((co.waitingOnTrades&&co.waitingOnTrades.value)||'$0.00')+' AddlDays='+((co.waitingOnTrades&&co.waitingOnTrades.additionalDays)||'0'), '  Quote Submitted: Total='+((co.quoteSubmitted&&co.quoteSubmitted.total)||'0')+' Value='+((co.quoteSubmitted&&co.quoteSubmitted.value)||'$0.00')+' AddlDays='+((co.quoteSubmitted&&co.quoteSubmitted.additionalDays)||'0'), '  Approved RFCs: Total='+((co.approvedRfcs&&co.approvedRfcs.total)||'0')+' Value='+((co.approvedRfcs&&co.approvedRfcs.value)||'$0.00')+' AddlDays='+((co.approvedRfcs&&co.approvedRfcs.additionalDays)||'0')].join('\n'); })()}
+${(function(){ const co=(state.section6&&state.section6.s6_1_changeOrderLog)||{}; return ['  Waiting on Trades Pricing: Total='+((co.waitingOnTrades&&co.waitingOnTrades.total)||'0')+' Value='+((co.waitingOnTrades&&co.waitingOnTrades.value)||'$0.00')+' AddlDays='+((co.waitingOnTrades&&co.waitingOnTrades.additionalDays)||'0'), '  Quote Submitted: Total='+((co.quoteSubmitted&&co.quoteSubmitted.total)||'0')+' Value='+((co.quoteSubmitted&&co.quoteSubmitted.value)||'$0.00')+' AddlDays='+((co.quoteSubmitted&&co.quoteSubmitted.additionalDays)||'0'), '  Approved Changes: Total='+((co.approvedRfcs&&co.approvedRfcs.total)||'0')+' Value='+((co.approvedRfcs&&co.approvedRfcs.value)||'$0.00')+' AddlDays='+((co.approvedRfcs&&co.approvedRfcs.additionalDays)||'0')].join('\n'); })()}
 6.3 Anticipated Changes (PM-entered):
 ${(state.section6 && Array.isArray(state.section6.s6_3_anticipated) ? state.section6.s6_3_anticipated : []).map((a, i) => '  ' + (i+1) + '. ' + (a.description||'')).join('\n') || '  (none)'}
 6.4 Cash Allowances count: ${(state.section6 && Array.isArray(state.section6.s6_4_allowances) ? state.section6.s6_4_allowances.length : 0)} row(s)
